@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Ex Nihilo</title>
+  <link rel="stylesheet" href="style/reset.css">
+  <link rel="stylesheet" href="style/style.css">
+
+  <script lang="javascript">
+    console.log('hello');
+  </script>
+</head>
+
+<body>
+  <div id="darkside"></div>
+<!-- <div id="nav-button" tabindex="1"></div> -->
+<div id="sidebar">
+  <ul class="toc">
+    <li><a href="#intro">Introduction</a></li>
+    <li><a href="#monitor">Monitor</a></li>
+    <li><a href="#persistence">Persistence</a></li>
+    <li><a href="#forth">FORTH</a></li>
+    <li><a href="#forth16-bootstrap">Bootstrapping FORTH</a></li>
+  </ul>
+  <div id="updated-at">
+    <!-- TODO: Automate this? It will be easy to forget. -->
+    Updated July 27, 2020
+  </div>
+</div>
+<article>
+<section id="intro">
+  <h1>Ex Nihilo</h1>
+  <p>
+    If you had a blank computer, could you ever do anything with it? Say you
+    were on a desert island with only a source of electricity, a computer
+    with a blank hard drive, and luckily, a copy of the Intel X86 Instruction
+    Set Architecture manual, could you bootstrap a useful system?
+  </p>
+  <h2>Rules</h2>
+  <p>
+    For practical reasons, this project cheats a little. First, all the work
+    is done in a VirtualBox VM rather than a physical machine. Second, the
+    initial disk image (containing just the monitor program that follows) is
+    created outside of VirtualBox, using <code>xxd</code>and
+    <code>VBoxManage</code>. And finally, I haven't strictly limited the
+    resources I'm willing to use. Notably,
+    <a href="https://wiki.osdev.org">OSDev Wiki</a> and
+    <a href="https://forth-standard.org/">FORTH Standard</a>.
+  </p>
+  <p>
+    In the future, I may try to use a real device, emulate an IDE or SATA
+    device "by hand" for the initial monitor program, and limit the reference
+    material to only instruction set reference (or perhaps no reference at all).
+    But not yet.
+  </p>
+</section>
+<section id="monitor">
+  <h1>Monitor</h1>
+  <p>
+    First, we need a way to get any data at all into memory, so it can be
+    executed. A monitor program is placed in the boot sector so that is executes
+    on boot.  We'll skip hand-emulated SATA for now.
+  </p>
+  <img class="subject" src="img/halves/01-0.jpg">
+  <p>
+    This monitor accepts hex input from the keyboard and writes it to the
+    location given by <code>[di]</code>. Absolutely no error handling is
+    done, so it is critical to type without mistakes. It's important for this
+    initial program to be as small and simple as possible, since in a real
+    desert island computer emergency, it would need to be inputted by
+    emulating a disk drive. This won't take long to explain, since there
+    isn't much of it.
+  </p>
+  <p>
+    First, it sets the segment registers <code>cs</code>, <code>ds</code>, and
+    <code>es</code> to zero (<code>es</code> turned out to be unnecessary).
+  </p>
+  <p>
+    Then, it processes characters from the keyboard one by one using BIOS
+    interrupt <code>16h</code> to read a character, then interrupt
+    <code>10h</code> to echo it.  Each character is first checked to see if it
+    is a command character.
+  </p>
+  <p>
+    If the character is a <code>.</code>, the last two bytes are interpreted
+    as an address, and the write pointer is set to that address:
+  </p>
+  <pre><code
+>mov di, [di - 2]
+</code></pre>
+  <p>
+    If the character is <code>!</code>, the last two bytes are interpreted as
+    an address, and that address is called.
+  </p>
+  <pre><code
+>dec di; dec di
+call [di]
+</code></pre>
+  <p>
+    An earlier version used <code>jmp</code> rather than <code>call</code>,
+    but calling is much more useful since it allows multiple functions to be
+    called, each time returning to the monitor for further data entry or
+    function calling. Callees must save the registers they modify!
+  </p>
+</section>
+<section>
+  <img class="subject" src="img/halves/01-1.jpg">
+  <p>
+    If the current character is not a command character, then it is interpreted
+    as a nibble in a byte that will be written to <code>[di]</code>.  Within
+    <code>loop_outer</code>, <code>cx</code> is set to <code>2</code>, since
+    there are two hex characters in a byte.  <code>dl</code> is used as an
+    accumulator for the byte value.
+  </p>
+  <p>
+    Since <code>0-9</code> and <code>a-f</code> are not adjacent in ASCII, and
+    we would like to write as little hand-assembled machine code as possible,
+    the math to convert a character into a nibble value looks a little strange:
+  </p>
+  <p>
+    First, <code>dl</code> is shifted left by <code>4</code> to move the last
+    nibble up and out of the way of the nibble being read now. Then, the
+    value of <code>:</code> is subtracted. Since <code>:</code> immediately
+    follows <code>9</code>, after the subtraction the value is negative if
+    it is in <code>0-9</code>, and non-negative if it is in <code>a-f</code>.
+    No attempt is made to handle invalid characters.
+  </p>
+  <p>
+    If the character is <code>0-9</code>, <code>10</code> is added to bring it
+    back above zero, and it is added
+  </p>
+  <p>
+    If the character is <code>a-f</code>, then the value has
+    <code>('a' - ':')</code> subtracted from it, to bring it to
+    <code>0-5</code>. Execution then falls through to the digit handling, where
+    <code>10</code> is added and accumulation occurs.
+  </p>
+  <p>
+    On the second loop in <code>loop_inner</code>, <code>stosb</code> is used to
+    store the accumulated byte value to <code>[di]</code> and increment
+    <code>di</code>.  Then a space is emitted using interrupt <code>10h</code>,
+    to make it easier to see what has been typed.
+  </p>
+  <p>
+    Finally, a short test is provided.  It moves <code>di</code> to
+    <code>0x8000</code>, inputs a short function that prints <code>~</code>, and
+    then calls that function.
+  </p>
+</section>
+<section id="persistence">
+  <img class="subject" src="img/halves/02-0.jpg">
+  <img class="subject" src="img/halves/02-1.jpg">
+  <h1>Persistence</h1>
+  <p>
+    Now that we can enter functions and call them, the most critical thing is to
+    be able to save our work.  Since the monitor does no input validation, and
+    we are assembling instructions by hand, mistakes will be common.  We don't
+    want to start from scratch every time we hang the machine (which will be
+    often).
+  </p>
+  <p>
+    BIOS interrupt <code>13h</code> is used to read and write using LBA.  Two
+    configuration structures are built:  one that writes the boot sector, and
+    another to read and write 63 sectors at <code>0x8000</code>.  "Why 63?" you
+    ask.  Because 64 caused a hang.  I didn't bother to diagnose why, but
+    possibly because <code>0x8000 + 64 * 512</code> is too large to fit in a
+    16-bit integer.
+  </p>
+  <p>
+    One important thing to note is that these functions are all defined in the
+    memory occupied by the boot sector.  It is dangerous to rewrite the boot
+    sector, but it's important for these persistence functions. We need them to
+    be available at boot so they can be used to load everything else.
+  </p>
+</section>
+<section id="forth">
+  <h1>FORTH</h1>
+  <p>
+    Writing out assembly by hand, translating it to hex, and keying it without
+    mistakes is tedious and awful.  So, as soon as possible, it would be nice to
+    work at a higher level of abstraction.  FORTH is a good candidate for
+    several reasons:  it's easy to parse, straighforward to bridge with native
+    code, and—crucially—suitable for bootstrapping itself.
+  </p>
+</section>
+<section id="forth16-asm">
+  <img class="subject" src="img/halves/03-0.jpg">
+  <p>
+    This first implementation of FORTH is as simple as possible, and consists
+    only of six global variables, six dictionary entries, and a dozen or so
+    functions to implement the interpreter.
+  </p>
+  <p>TODO: Describe globals.</p>
+  <p>TODO: Describe dictionary layout.</p>
+  <p>TODO: Describe initial dictionary entries.</p>
+</section>
+<section>
+  <img class="subject" src="img/halves/03-1.jpg">
+  <p>TODO: Describe docol.</p>
+  <p>
+    TODO: Describe interpret.  Talk about the initial version not being powerful
+    enough to bootstrap. and having to re-implement it as
+    <code>interpret.2</code>.
+  </p>
+</section>
+<section>
+  <img class="subject" src="img/halves/04-0.jpg">
+  <p>TODO: Describe word</p>
+  <p>TODO: Describe find</p>
+</section>
+<section>
+  <img class="subject" src="img/halves/04-1.jpg">
+</section>
+<section>
+  <img class="subject" src="img/halves/05-0.jpg">
+  <p>TODO: Describe NEXT/PUSHRS/POPRS macros.</p>
+</section>
+  <!-- blank <img class="subject" src="img/halves/05-1.jpg"> -->
+<section>
+  <img class="subject" src="img/halves/06-0.jpg">
+  <p>TODO: Describe create</p>
+</section>
+<section>
+  <img class="subject" src="img/halves/06-1.jpg">
+  <p>TODO: Describe >cfa</p>
+  <p>TODO: Describe machine</p>
+  <p>TODO: Describe end_machine</p>
+</section>
+<section>
+  <img class="subject" src="img/halves/07-0.jpg">
+  <p>TODO: Describe hexword</p>
+  <p>TODO: Describe cold_start</p>
+  <p>TODO: Describe goforth</p>
+</section>
+  <!-- blank <img class="subject" src="img/halves/07-1.jpg"> -->
+<section>
+  <img class="subject" src="img/halves/08-0.jpg">
+  <img class="subject" src="img/halves/08-1.jpg">
+  <p>TODO: Describe interpret.2</p>
+</section>
+<section id="forth16-bootstrap">
+  <h1>Bootstrapping Forth</h1>
+</section>
+<section>
+  <img class="subject" src="img/halves/09-0.jpg">
+  <p>
+    TODO: Describe describe the bootstrapping process, especially the rationale
+    for the order of implementation, and incremental improvements like
+    <code>[tab]</code> as a makeshift return key.
+  </p>
+  <img class="subject" src="img/halves/09-1.jpg">
+  <img class="subject" src="img/halves/10-0.jpg">
+  <img class="subject" src="img/halves/10-1.jpg">
+  <img class="subject" src="img/halves/11-0.jpg">
+  <img class="subject" src="img/halves/11-1.jpg">
+  <img class="subject" src="img/halves/12-0.jpg">
+  <img class="subject" src="img/halves/12-1.jpg">
+  <img class="subject" src="img/halves/13-0.jpg">
+  <img class="subject" src="img/halves/13-1.jpg">
+  <img class="subject" src="img/halves/14-0.jpg">
+  <img class="subject" src="img/halves/14-1.jpg">
+  <img class="subject" src="img/halves/15-0.jpg">
+  <img class="subject" src="img/halves/15-1.jpg">
+  <img class="subject" src="img/halves/16-0.jpg">
+  <img class="subject" src="img/halves/16-1.jpg">
+  <img class="subject" src="img/halves/17-0.jpg">
+  <img class="subject" src="img/halves/17-1.jpg">
+  <img class="subject" src="img/halves/18-0.jpg">
+  <img class="subject" src="img/halves/18-1.jpg">
+  <img class="subject" src="img/halves/19-0.jpg">
+  <img class="subject" src="img/halves/19-1.jpg">
+  <img class="subject" src="img/halves/20-0.jpg">
+  <img class="subject" src="img/halves/20-1.jpg">
+  <img class="subject" src="img/halves/21-0.jpg">
+  <!-- blank <img class="subject" src="img/halves/21-1.jpg"> -->
+</section>
+<section>
+  <p>More to come...</p>
+</section>
+</article>
+</body>
+</html>

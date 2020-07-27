@@ -1,0 +1,9 @@
+#!/bin/bash
+
+rm -rf docs/img/clean/*
+
+for x in docs/img/raw/*.jpg; do
+  y=${x##*/}
+  y=docs/img/clean/${y}
+  magick $x -resize 2800 -shave 6 -bordercolor white -border 6 $y
+done

@@ -1,0 +1,10 @@
+#!/bin/bash
+
+rm -rf docs/img/halves/*
+
+for x in docs/img/clean/*.jpg; do
+  y=${x##*/}
+  y=${y%.jpg}
+  y=docs/img/halves/${y}.jpg
+  magick $x -crop 2x1@ +repage $y
+done
