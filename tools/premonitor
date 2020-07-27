@@ -1,0 +1,6 @@
+#!/bin/bash
+
+xxd -r -p > monitor.bin
+truncate -s 510 monitor.bin 
+echo '55 aa' | xxd -r -p >> monitor.bin
+VBoxManage convertfromraw --format VDI stdin monitor.vdi $(( 1024 * 1024 )) < monitor.bin
